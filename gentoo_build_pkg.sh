@@ -41,7 +41,8 @@ check_if_new_pkg()
 build_pkg()
 {
     pkg=$(qlist -IC)
-    quickpkg ${pkg-sys\-libs\/glibc} --include-unmodified-config y
+    quickpkg ${pkg-sys\-libs\/glibc} --include-unmodified-config y \
+    >> "$logdir"/quickpkg-${today}.log 2>&1
 }
 
 send()
