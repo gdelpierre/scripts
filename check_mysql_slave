@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # debug
-set -x
+# set -x
 
 # Nagios alert status
 STATE_OK=0
@@ -10,21 +10,26 @@ STATE_CRITICAL=2
 STATE_UNKNOWN=3
 
 MYSQL="/usr/bin/mysql"
-MYSQL_USER="root"
-MYSQL_PASS="h8nLh8gdKbnBz3MWdyJpqvYkdR6VbhBd"
+MYSQL_USER=""
+MYSQL_PASS=""
 HOST="localhost"
 
 DELAY_OK=600
 DELAY_WARNING=3600
 
 MYSQL_STATUS=$(${MYSQL} -u${MYSQL_USER} \
-			 -p${MYSQL_PASS} \
-			 -e "SHOW SLAVE STATUS\G" \
-		| grep '\(Slave_.*_Running\|Seconds_Behind_Master\)' \
-		| sed 's/^ *//')
+                         -p${MYSQL_PASS} \
+                         -e "SHOW SLAVE STATUS\G" \
+                | grep '\(Slave_.*_Running\|Seconds_Behind_Master\)' \
+                | sed 's/^ *//')
 
 if [[ $? -eq 1 ]]; then
-    echo -n "SLAVE SQL CRITICAL"
+    echo -n "CRITICAL - Connection refused"
+    exit "$STATE_CRITICAL"
+fi
+
+if [[ -z "$MYSQL_STATUS" ]]; then
+    echo -n "CRITICAL - No slave configured"
     exit "$STATE_CRITICAL"
 fi
 
@@ -45,13 +50,15 @@ if [[ "$SQL" != "Yes" ]]; then
 fi
 
 ## Check Seconds_Behind_Master value
-if [[ $DELAY = "NULL" ]]; then
+if [[ "$DELAY" = "NULL" ]]; then
     echo "CRITICAL - Replication delay NULL"
     exit "$STATE_CRITICAL"
-elif [[ $DELAY -lt $DELAY_WARNING ]]; then
+elif [[ "$DELAY" -eq 0 ]]; then
+    exit "$STATE_OK"
+elif [[ "$DELAY" -lt "$DELAY_WARNING" ]]; then
     echo "WARNING - Replication delay $DELAY seconds"
     exit "$STATE_WARNING"
-elif [[ $DELAY -ge $DELAY_WARNING ]]; then
+elif [[ "$DELAY" -ge "$DELAY_WARNING" ]]; then
     echo "CRITICAL - Replication delay $DELAY seconds"
     exit "$STATE_CRITICAL"
 fi
