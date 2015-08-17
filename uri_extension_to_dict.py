@@ -12,6 +12,7 @@ def count_extension(filename):
         for line in file:
             # Remove newlines / carriage returns.
             line = line.strip()
+            # Should be a non-empty line, with 200 OK and GET.
             if line and "GET" in line and line.split('|')[13] == '200':
                 ext_line = line.split('|')[3]
                 if '.' in ext_line:
