@@ -12,10 +12,10 @@ def count_extension(filename):
             if line:
                 ext_line = line.split('|')[3]
                 if '.' in ext_line:
-                  clean_ext = re.search('[a-z]+', \
+                  clean_ext = re.search('[a-zA-Z]+', \
                               ext_line.split('.')[-1])
                   if clean_ext is not None:
-                    ext_dict[clean_ext.group(0)] += 1
+                    ext_dict[clean_ext.group(0).lower()] += 1
 
     print ext_dict
 
