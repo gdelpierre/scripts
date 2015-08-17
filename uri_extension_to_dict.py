@@ -13,7 +13,7 @@ def count_extension(filename):
             # Remove newlines / carriage returns.
             line = line.strip()
             # Should be a non-empty line, with 200 OK and GET method.
-            if line and "GET" in line and line.split('|')[13] == '200':
+            if line and 'GET' in line and line.split('|')[13] == '200':
                 ext_line = line.split('|')[3]
                 if '.' in ext_line:
                   # extensions should be like this regex.
