@@ -50,7 +50,10 @@ create_list()
 	printf "Scanning if new files...\n"
 
 	cat "$folders_file" |
-	  xargs -L1 -P100 -I % bash -c ' export log="%" ; export tmp_dir="/tmp" ; find % -ctime 1 -type f > "$tmp_dir"/files"${log//\//-}".txt ' &
+	  xargs -L1 -P100 -I % bash -c ' \
+		  export log="%" ; \
+		  export tmp_dir="/tmp" ; \
+		  find % -ctime 1 -type f > "$tmp_dir"/files"${log//\//-}".txt ' &
 
 	wait
 
