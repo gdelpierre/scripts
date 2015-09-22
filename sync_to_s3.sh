@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
 
-set -e
-set -x
+set -o errexit ## == set -e
+set -o nounset
+#set -o verbose ## == set -v
+set -o xtrace ## == set -x
 
+BUCKET_AWS=""
 DATE=$(date +%Y%m%d)
-FILE_TO_SYNC="/tmp/file-to-sync-"$DATE".txt"
+DIR_TMP="/tmp"
+FILE_TO_SYNC="$DIR_TMP/file-to-sync-$DATE.txt"
 
-## Create list
 create_list()
 {
-	local tmp_dir="/tmp"
-	local folders_file="$tmp_dir/folders-$DATE.txt"
-	local orphans_file="$tmp_dir/files-$DATE.txt"
+	local folders_file="$DIR_TMP/folders-$DATE.txt"
+	local log=""
+	local orphans_file="$DIR_TMP/files-$DATE.txt"
+	local tmp_dir=""
 	
 	local root_find_dir=""
-	list_dirs=(
-		"foo"
-		"bar/baz/foo"
-		"bar"
-		"baz"
-		"baz/bar"
-		"flunk/rimshot"
-	)
+	local list_dirs=(
+			"foo"
+			"bar/baz/foo"
+			"bar"
+			"baz"
+			"baz/bar"
+			"flunk/rimshot"
+			)
 
 	# of dirs.
 	printf "Creating list of dirs...\n"
@@ -45,18 +49,21 @@ create_list()
 	# of dirs file compute above.
 	printf "Scanning if new files...\n"
 
-	( cat "$folders_file" |\ 
-	  xargs -L1 -P100 -I % bash -c ' export log="%" ; find % -ctime 1 -type f > "$tmp_dir"/files-"${log//\//-}".txt ' & )
+	cat "$folders_file" |
+	  xargs -L1 -P100 -I % bash -c ' export log="%" ; export tmp_dir="/tmp" ; find % -ctime 1 -type f > "$tmp_dir"/files"${log//\//-}".txt ' &
+
+	wait
+
 }
 
-clean_list_of_files_to_sync()
+concat_and_clean()
 {
-	local concat_file="$tmp_dir/concat-$DATE.txt"
+	local concat_file="$DIR_TMP/concat-$DATE.txt"
 
 	# Concatenate files
 	printf "Concatenation of all the files...\n"
 
-	cat "$tmp_dir"/files{,-*} >> "$concat_file"
+	cat "$DIR_TMP"/files-*.txt >> "$concat_file"
 
 	# Delete dupplicate entry
 	printf "Dupplicate entry in files log...\n"
@@ -66,31 +73,56 @@ clean_list_of_files_to_sync()
 
 upload_files()
 {
-	local err_log="upload-err.log"
-	local bucket=""
+	local err_log=""
+	local file=""
+	local s3cmd_opts=()
 
-	cat "$FILE_TO_SYNC" |\
-	  xargs -L1 -P50 -I % s3cmd put % "$bucket"/% --preserve --server-side-encryption --multipart-chunk-size-mb=100MB 
+	printf "Sync'ing files, could take a while...\n"
+
+	cat "$FILE_TO_SYNC" |
+	    xargs -L1 -P15 -I % bash -c ' \
+		export bucket_aws="" ; \
+		export file="%" ; \
+		export err_log="upload-err.log" \
+		export s3cmd_opts=("--preserve"
+                        "--server-side-encryption"
+                        "--multipart-chunk-size-mb=100"
+                        "-c s3cmd.cfg"
+                        ) ; \
+
+		s3cmd put $file $bucket_aws/${file:19} ${s3cmd_opts[@]} ' &
+
+	wait
 	
 }
 
 check_upload()
 {
+	local err_log="/tmp/check-err.log"
+	local file=""
+	local return_code=""
+	local s3cmd_opts="-c s3cmd.cfg"
 	local upload_file=$(shuf -n 10 "$FILE_TO_SYNC")
-	local err_log="check-err.log"
-	local bucket=""
+
+	printf "Verifying files on bucket...\n"
 
 	while read -r file; do
 
-		s3cmd info "$bucket"/"$file"
+		s3cmd info "$BUCKET_AWS"/"${file:19}" ${s3cmd_opts} 2>>"$err_log" 1>/dev/null
+		return_code=$(echo "$?")
 
-		if [ "$?" != 0 ] ; then
-			printf "ERR! $upload_file not found upstream\n" 1>"$err_log"
+		if [[ "$return_code" == 12 ]] ; then
+			printf "ERR! $upload_file not found upstream\n" 1>>"$err_log"
+		elif [[ "$return_code" != 0 ]] ; then
+			printf "ERR! An error was occured while verifying $upload_file\n" 1>>"$err_log"
 		fi
 
 	done <<< "$upload_file"
+
+	printf "No errors reported.\n"
 }
 
-clean_tmp_files()
-{
-}
+create_list
+concat_and_clean
+upload_files
+check_upload
