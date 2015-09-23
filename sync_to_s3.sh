@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-set -o errexit ## == set -e
-set -o nounset
-#set -o verbose ## == set -v
-set -o xtrace ## == set -x
+set -o errexit  ## == set -e
+set -o nounset  ## == set -u
+set -o pipefail
+
+## debug purpose.
+#set -o verbose  ## == set -v
+#set -o xtrace   ## == set -x
 
 BUCKET_AWS=""
 DATE=$(date +%Y%m%d)
@@ -16,7 +19,7 @@ create_list()
 	local log=""
 	local orphans_file="$DIR_TMP/files-$DATE.txt"
 	local tmp_dir=""
-	
+
 	local root_find_dir=""
 	local list_dirs=(
 			"foo"
@@ -51,12 +54,11 @@ create_list()
 
 	cat "$folders_file" |
 	  xargs -L1 -P100 -I % bash -c ' \
-		  export log="%" ; \
-		  export tmp_dir="/tmp" ; \
-		  find % -ctime 1 -type f > "$tmp_dir"/files"${log//\//-}".txt ' &
+		export log="%" ; \
+		export tmp_dir="/tmp" ; \
+		find % -ctime 1 -type f > "$tmp_dir"/files"${log//\//-}".txt ' &
 
 	wait
-
 }
 
 concat_and_clean()
@@ -68,8 +70,8 @@ concat_and_clean()
 
 	cat "$DIR_TMP"/files-*.txt >> "$concat_file"
 
-	# Delete dupplicate entry
-	printf "Dupplicate entry in files log...\n"
+	# Delete duplicate entry
+	printf "Delete duplicate entry in files log...\n"
 
 	awk '!dup[$0]++' "$concat_file" > "$FILE_TO_SYNC"
 }
@@ -93,39 +95,70 @@ upload_files()
                         "-c s3cmd.cfg"
                         ) ; \
 
-		s3cmd put $file $bucket_aws/${file:19} ${s3cmd_opts[@]} ' &
+		s3cmd put $file $bucket_aws/${file:19} ${s3cmd_opts[@]} >/dev/null 2>&1 ' &
 
 	wait
-	
 }
 
 check_upload()
 {
+	# We test 50% of uploaded files.
+	local count=$(( $(wc -l < "$FILE_TO_SYNC") / 2))
 	local err_log="/tmp/check-err.log"
 	local file=""
 	local return_code=""
 	local s3cmd_opts="-c s3cmd.cfg"
-	local upload_file=$(shuf -n 10 "$FILE_TO_SYNC")
+	local tested_files=0
+	local upload_file=$(shuf -n "$count" "$FILE_TO_SYNC")
+
+	# empty log file
+	! [[ -s "$err_log" ]] || > "$err_log"
 
 	printf "Verifying files on bucket...\n"
 
 	while read -r file; do
 
-		s3cmd info "$BUCKET_AWS"/"${file:19}" ${s3cmd_opts} 2>>"$err_log" 1>/dev/null
-		return_code=$(echo "$?")
+		return_code=$(s3cmd info "$BUCKET_AWS"/"${file:19}" ${s3cmd_opts} >/dev/null 2>&1 ; echo $?)
 
 		if [[ "$return_code" == 12 ]] ; then
-			printf "ERR! $upload_file not found upstream\n" 1>>"$err_log"
+			printf "ERR! $file not found upstream\n" 1>>"$err_log"
+			tested_files=$(( ${tested_files} - 1 ))
 		elif [[ "$return_code" != 0 ]] ; then
-			printf "ERR! An error was occured while verifying $upload_file\n" 1>>"$err_log"
+			printf "ERR! An error was occured while verifying $file\n" 1>>"$err_log"
+			tested_files=$(( ${tested_files} - 1 ))
 		fi
+
+		tested_files=$(( ${tested_files} + 1 ))
 
 	done <<< "$upload_file"
 
-	printf "No errors reported.\n"
+	printf "=> %d files tested, %d OK\n" "$count" "$tested_files"
+
+	if [[ -s "$err_log" ]]; then
+		printf "No errors reported.\n"
+	else
+		printf "Error(s) detected.\nPlease check $err_log\n"
+		exit 1
+	fi
 }
 
+clean_tmp_file()
+{
+	rm "$FILE_TO_SYNC"
+}
+
+clean_tmp_files_on_failure()
+{
+	local file=""
+	for file in "$DIR_TMP"/{files,folders,concat}-*.txt; do
+		[[ -f "$file" ]] && rm "$file"
+	done
+}
+
+trap clean_tmp_files_on_failure EXIT SIGHUP SIGKILL SIGINT
 create_list
 concat_and_clean
 upload_files
 check_upload
+clean_tmp_file
+exit 0
