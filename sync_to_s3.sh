@@ -219,12 +219,11 @@ clean()
 	rm ${DAY_LOG/$DATE/$YESTERDAY}
 }
 
-sleep 100
-
 create_list
 concat_and_clean
 upload_files_to_s3
 check_s3_upload
 clean
 send_day_log "Backup day log."
+
 exit 0
