@@ -8,14 +8,16 @@ set -o pipefail
 #set -o verbose  ## == set -v
 #set -o xtrace   ## == set -x
 
+starttime=$(date +%s)
+
 BUCKET_AWS="s3://"
 DATE=$(date +%Y%m%d)
 YESTERDAY=$(date +%Y%m%d -d "yesterday")
 DIR_TMP="/tmp"
 FILE_TO_SYNC="$DIR_TMP/files-to-sync-$DATE.txt"
 DAY_LOG="$DIR_TMP/$0-$DATE"
-FROM="from@fqdn.tld"
-TO="foo@bar.baz"
+FROM="bar@tld"
+TO="foo@tld"
 
 trap to_do_on_trap SIGHUP SIGINT SIGQUIT SIGTERM
 
@@ -37,7 +39,21 @@ send_day_log()
 to_do_on_trap()
 {
 	send_day_log "ERR: Script was trapped !"
+	send_metrics_to_graphite "trapped" "1"
 	exit 1
+}
+
+send_metrics_to_graphite()
+{
+	# The data sent must be in the following format: 
+	# <metric path> <metric value> <metric timestamp>.
+	local port=2003
+	local host="aaa.bbb.ccc.ddd"
+	local metric_name="stats_count.my_fucking_awesome.$1"
+	local metric_value="$2"
+	local epoch_timestamp=$(date +%s)
+
+	echo "${metric_name} ${metric_value} ${epoch_timestamp}" | nc "$host" "$port"
 }
 
 ## Check when the script was launched for the last time and when it was successfully.
@@ -47,6 +63,7 @@ to_do_on_trap()
 	printf "Day file already exists, check it out.\n"
 	echo "File \"$DAY_LOG\" is already present." | 
 	send_mail "$FROM" "$TO" "ERR: Something went wrong"
+	send_metrics_to_graphite "nok" "1"
 	exit 1
 }
 
@@ -81,13 +98,13 @@ create_list()
 	local tmp_dir=""
 	local root_find_dir="/"
 	list_dirs=(
-		"bar/baz"
+		"foo/baz"
+		"foo/tata/yoyo/yolo"
+		"foo/wannabee"
+		"foo/plop"
+		"foo/biz/videonum"
 		"foo/bar/baz"
-		"bar/baz"
-		"baz/foo"
-		"foo/bar/baz"
-		"foo/bar/baz"
-		"baz/foo"
+		"swag/fuuu"
 	)
 
 	# of dirs.
@@ -151,14 +168,13 @@ upload_files_to_s3()
 	    xargs -L1 -P30 -I % bash -c ' \
 		export bucket_aws="s3://" ; \
 		export file="%" ; \
-		export err_log="upload-err.log" \
 		export s3cmd_opts=("--preserve"
                         "--server-side-encryption"
                         "--multipart-chunk-size-mb=100"
-                        "-c /root/test/s3cmd.cfg"
+                        "-c ~/s3cmd.cfg"
                         ) ; \
 
-		s3cmd put $file $bucket_aws${file:12} ${s3cmd_opts[@]} >/tmp/log.log 2>&1 ' &
+		s3cmd put $file $bucket_aws${file:12} ${s3cmd_opts[@]} >/dev/null 2>&1 ' &
 
 	wait
 }
@@ -168,15 +184,16 @@ check_s3_upload()
 	# We test all the uploaded files.
 	local count=$(( $(wc -l < "$FILE_TO_SYNC") ))
 	local err_log="/tmp/check-err.log"
+	local fsize=0
 	local line=""
 	local return_code=""
 	local s3cmd_opts="-c ~/s3cmd.cfg"
 	local tested_files=0
+	local tot_fsize=0
 
 	# move log file if present and not empty.
         ( [[ -a "$err_log" ]] && [[ -s "$err_log" ]] ) &&
-        mv "$err_log" "$err_log-$YESTERDAY" ||
-        rm "$err_log"
+        mv "$err_log" "$err_log-$YESTERDAY"
 
 	printf "Verifying files on bucket...\n" | tee -a "$DAY_LOG"
 
@@ -196,13 +213,29 @@ check_s3_upload()
 
 	done < "$FILE_TO_SYNC"
 
-	printf "=> %d files tested, %d OK\n" "$count" "$tested_files" | tee -a "$DAY_LOG"
+	printf "=> %d files tested, %d OK\n" "$count" "$tested_files" | 
+	tee -a "$DAY_LOG"
+
+	while read -r line ; do
+
+		[[ -a $line ]] && fsize=$(stat -c %s $line) || fsize=0
+		tot_fsize=$(expr $tot_fsize + $fsize)
+	
+	done < "$FILE_TO_SYNC"
+	# tot_fsize in Bytes.
+	send_metrics_to_graphite "theoric_up_fsize" "$tot_fsize"
+	
+	send_metrics_to_graphite "num_up_files" "$count"
+	send_metrics_to_graphite "num_up_files_ok" "$tested_files"
+	send_metrics_to_graphite "num_up_files_nok" "$(expr $count - $tested_files)"
 	
 	if [[ -a "$err_log" ]] || [[ "$count" != ${tested_files} ]]; then
-		cat "err_log" >> "$DAY_LOG"
-		printf "Error(s) detected.\nPlease check $err_log\n" | tee -a "$DAY_LOG"
+		cat "$err_log" >> "$DAY_LOG"
+		
+		printf "Error(s) detected.\nPlease check $err_log\n" | 
+		tee -a "$DAY_LOG"
+		
 		send_day_log "ERR: Error during upload detected."
-		exit 1
 	else
 		printf "No errors reported.\n" | tee -a "$DAY_LOG"
 	fi
@@ -215,7 +248,8 @@ clean()
 		[[ -f "$file" ]] && rm "$file"
 	done
 
-	[[ -a "${DAY_LOG/$DATE/$YESTERDAY}" ]] &&
+	( [[ -a "${DAY_LOG/$DATE/$YESTERDAY}" ]] && 
+	[[ ! -s "${DAY_LOG/$DATE/$YESTERDAY}" ]] ) &&
 	rm ${DAY_LOG/$DATE/$YESTERDAY}
 }
 
@@ -224,6 +258,10 @@ concat_and_clean
 upload_files_to_s3
 check_s3_upload
 clean
-send_day_log "Backup day log."
+
+endtime=$(date +%s)
+
+send_metrics_to_graphite "elapsed_time" "$(expr $endtime - $starttime)"
+send_metrics_to_graphite "ok" "1"
 
 exit 0
