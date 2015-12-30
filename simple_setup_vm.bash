@@ -123,7 +123,6 @@ iface eth0 inet static
 	broadcast	$BROADCAST
 	gateway		$GATEWAY
 
-auto eth0
 iface eth0 inet6 static
 	address		$IPV6
 	netmask		64
