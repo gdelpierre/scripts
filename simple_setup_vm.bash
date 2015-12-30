@@ -83,7 +83,6 @@ IPV4=${IPV4%%\/*}
 
 # Files to modify
 files_with_hostname="/etc/mailname /etc/postfix/main.cf /etc/hostname /etc/hosts /var/cache/debconf/config.dat" 
-files_with_ip="/etc/hosts /etc/network/interfaces"
 
 delete_me()
 {
